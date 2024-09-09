@@ -1,0 +1,181 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+# For GEO Data https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM6568672
+# Following this protocol: Joint RNA and ATAC Analysis: 10x Multiomic  https://stuartlab.org/signac/articles/pbmc_multiomic
+
+#1 Set up environment
+#1.1 Install any packages that you may need
+```{r}
+#BiocManager::install("BSgenome.Mmusculus.UCSC.mm10")
+```
+
+#1.2 Load libraries you already have
+```{r}
+library(Seurat)
+library(GenomicRanges)
+library(Signac)
+library(EnsDb.Mmusculus.v75)
+library(BSgenome.Mmusculus.UCSC.mm10)
+```
+
+#2 Read in the .h5 RNA file (has snATAC and scRNA included) 
+```{r}
+# In the fragment path you will need to also have an index file, I explain how to get that further below 
+so.1 <- Read10X_h5('/Users/christinacomo/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/10xVisium/Sophia/data/GSM6568675_WT_1_RNA_filtered_feature_bc_matrix.h5')
+```
+
+#2.1 Set up the directory to where the fragments.tsv.gz file is plus the indexed fragments file 
+```{r}
+frag.path <- '/Users/christinacomo/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/10xVisium/Sophia/data/GSM6568674_WT_1_atac_fragments.tsv.gz'
+```
+
+#3 Get the mouse annotation data so that we can annotate the snATAC genes 
+```{r}
+# extract gene annotations from EnsDb
+library(EnsDb.Mmusculus.v75)
+annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v75)
+```
+
+#3.1 We need to change the annotation file to UCSC style, because right now it does not have chr in front of the chromosome number 
+```{r}
+# get gene annotations for mouse 
+# change to UCSC style since the data was mapped to hg19
+seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
+genome(annotations) <- "mm10"
+head(annotations)
+```
+
+#4 Create the seurat object and chromatin assay for the ATAC and RNAseq assays 
+```{r}
+# had to run the following commands in terminal to get a fragements index file :
+  # tabix -p bed GSM6568678_WT_3_atac_fragments.tsv.gz
+
+# create a Seurat object containing the RNA adata
+so <- CreateSeuratObject(
+  counts = so.1$`Gene Expression`,
+  assay = "RNA"
+)
+
+# create ATAC assay and add it to the object
+so[["ATAC"]] <- CreateChromatinAssay(
+  counts = so.1$Peaks,
+  sep = c(":", "-"),
+  fragments = frag.path,
+  annotation = annotations
+)
+```
+
+```{r}
+so
+```
+
+```{r}
+DefaultAssay(so) <- "ATAC"
+
+so <- NucleosomeSignal(so)
+so <- TSSEnrichment(so)
+```
+
+```{r}
+DensityScatter(so, x = 'nCount_ATAC', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
+```
+
+
+```{r}
+# Use this violin plot to help remove any cells you dont want 
+VlnPlot(
+  object = so,
+  features = c("nCount_RNA", "nCount_ATAC", "TSS.enrichment", "nucleosome_signal"),
+  ncol = 4,
+  pt.size = 0
+)
+```
+
+```{r}
+# filter out low quality cells
+so <- subset(
+  x = so,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 25000 &
+    nCount_ATAC > 1500 &
+    nCount_RNA > 1000 &
+    nucleosome_signal < 1 &
+    TSS.enrichment > 1
+)
+so
+```
+
+```{r}
+# Switch assay to RNA to process data via SCT. SCT does the normalization, scaling, finding neighbors/clusters 
+DefaultAssay(so) <- "RNA"
+so <- SCTransform(so)
+so <- RunPCA(so)
+```
+
+```{r}
+DefaultAssay(so) <- "ATAC"
+so <- FindTopFeatures(so, min.cutoff = 5)
+so <- RunTFIDF(so)
+so <- RunSVD(so)
+```
+
+
+```{r}
+# build a joint neighbor graph using both assays
+DefaultAssay(so) <- 'SCT'
+
+so <- FindMultiModalNeighbors(
+  object = so,
+  reduction.list = list("pca", "lsi"), 
+  dims.list = list(1:50, 2:40),
+  modality.weight.name = "RNA.weight",
+  verbose = TRUE
+)
+
+# build a joint UMAP visualization
+so <- RunUMAP(
+  object = so,
+  nn.name = "weighted.nn",
+  assay = "RNA",
+  verbose = TRUE
+)
+
+DimPlot(so, label = TRUE, repel = TRUE, reduction = "umap") + NoLegend()
+```
+
+```{r}
+so <- FindNeighbors(so)
+so <- FindClusters(so, resolution = 0.2)
+so <- RunUMAP(so, dims = 1:10)
+```
+
+```{r}
+# resolution 0.5 looks a little over clustered to me, reducing to 0.2
+DimPlot(so, reduction = 'umap', label = T)
+```
+
+```{r}
+saveRDS(so, '/Users/christinacomo/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/10xVisium/Sophia/so.RDS')
+so <- readRDS('/Users/christinacomo/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/10xVisium/Sophia/so.RDS')
+```
+
+# I recommend finding the cellular cluster you are interested in in each sample and then subsetting it. Then, merge the subsetted data into one. This will allow a lot faster processing instead of trying to merge all samples into one with all cellular clusters. 
+
+# It looks like cluster 4 is bam-1 according to the paper. 
+
+```{r}
+FeaturePlot(so, feature = c('P2ry12', 'Lyz2', 'Lyve1'), ncol = 3)
+```
+```{r}
+FeaturePlot(so, features = c('Cd74', 'H2-Aa', 'H2-Eb1'), ncol = 3)
+```
+
+```{r}
+VlnPlot(so, features = c('Cd74', 'H2-Aa', 'H2-Eb1'), ncol = 3)
+```
+
