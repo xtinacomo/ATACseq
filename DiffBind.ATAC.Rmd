@@ -1,0 +1,380 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+# for atac data 
+# https://bioconductor.org/packages/release/bioc/vignettes/DiffBind/inst/doc/DiffBind.pdf
+
+```{r}
+BiocManager::install("DiffBind")
+library(DiffBind)
+```
+```{r}
+## Note need to use conda env diffbind which has DiffBind 3.4.10 loaded into R
+#BiocManager::install("DiffBind")
+library(DiffBind)
+#library(tidyverse)
+#library(rtracklayer)
+```
+
+
+```{r}
+# set working directory
+setwd("/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/ATAC/Control and Foxc1 Mutant +RA diet/")
+getwd()
+```
+
+
+```{r}
+# read in samplesheet, I made this based off the website link above for my samples 
+samples <- read.csv("./SampleSheet.csv")
+head(samples)
+```
+
+```{r}
+# read in peak files
+basedir <- '/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/ATAC/Control and Foxc1 Mutant +RA diet/'
+myc <- dba(sampleSheet=samples, dir=basedir)
+myc
+```
+
+```{r}
+# correlation heatmap can be generated which gives an initial clustering of the samples using the cross-correlations of each row of the binding matrix
+plot(myc)
+```
+
+```{r}
+#The next step is to calculate a binding matrix with scores based on read counts for everysample (affinity scores), rather than confidence scores for only those peaks called in a specific sample (occupancy scores). These reads are obtained using the function dba.count
+#count reads
+myc.counted <- dba.count(myc)
+myc.counted
+```
+
+```{r}
+plot(myc.counted)
+```
+
+```{r}
+# normalize data - I use default normalization method based on sequencing depth
+myc.counted <- dba.normalize(myc.counted)
+```
+
+```{r}
+getwd()
+saveRDS(myc.counted, './RDSfiles/myc.counted.rds')
+myc.counted <- readRDS("./RDSfiles/myc.counted.rds")
+```
+
+
+```{r}
+#Next step is to tell DiffBind how to model the data and which comparisons we are interested in. I am interested in comparisons relative to control with no diet 
+help("dba.contrast")
+myc.counted <- dba.contrast(myc.counted,
+                            reorderMeta=list(Condition="control"))
+myc.counted
+```
+
+```{r}
+#Perform differential analysis
+help("dba.analyze")
+myc.counted <- dba.analyze(myc.counted)
+dba.show(myc.counted, bContrasts=TRUE)
+```
+
+```{r}
+plot(myc.counted, contrast=1)
+```
+
+```{r}
+#retrieve differentially bound sites, returned as GRanges object 
+myc.counted.DB <- dba.report(myc.counted)
+myc.counted.DB
+```
+
+```{r}
+dba.plotVenn(myc.counted, contrast=4, bDB=TRUE, bGain=TRUE, bLoss=TRUE, bAll=FALSE)
+```
+#Sox2ot peak 1 chr3:34,558,494-34,559,707
+#Sox2ot peak 2 chr3:34,559,708-34,561,214
+#Sox2ot peak 3 chr3:34,561,149-34,562,362
+
+```{r}
+library(GenomicRanges)
+library(Signac)
+#no overlaps in control vs mutant is Sox2ot
+ranges.Sox2ot.1 <- StringToGRanges('3-34558245-34559793')
+ranges.Sox2ot.2 <- StringToGRanges('3-34559708-34561214')
+ranges.Sox2ot.3 <- StringToGRanges('3-34561249-34562362')
+findOverlaps(myc.counted.DB, ranges.Sox2ot.1) # overlap in control vs control RA, 3151
+findOverlaps(myc.counted.DB, ranges.Sox2ot.2)
+findOverlaps(myc.counted.DB, ranges.Sox2ot.3)
+```
+# Sox2 peak 1 3-34645214-34647334
+# Sox2 peak 2 3-34645256-34647306
+# Sox2 peak 3 3-34647482-34651779
+# Sox2 peak 4 3-34652478-34654542
+
+```{r}
+ranges.Sox2.1 <- StringToGRanges("3-34645214-34647334")
+ranges.Sox2.2 <- StringToGRanges("3-34645256-34647306")
+ranges.Sox2.3 <- StringToGRanges("3-34647482-34651779")
+ranges.Sox2.4 <- StringToGRanges("3-34652478-34654542")
+findOverlaps(myc.counted.DB, ranges.Sox2.1)
+findOverlaps(myc.counted.DB, ranges.Sox2.2)
+findOverlaps(myc.counted.DB, ranges.Sox2.3)
+findOverlaps(myc.counted.DB, ranges.Sox2.4)
+```
+```{r}
+myc.counted.DB[3151,]
+```
+
+# Look at differences between control and control RA - changed the contrasts above and re ran overlaps
+
+# No difference between control and mutants in Sox2ot region
+```{r}
+dba.plotVenn(myc.counted, contrast=2, bDB=TRUE, bGain=TRUE, bLoss=TRUE, bAll=FALSE)
+```
+
+```{r}
+dba.plotPCA(myc.counted,DBA_TISSUE,label=DBA_CONDITION)
+```
+
+```{r}
+dba.plotPCA(myc.counted, contrast=1, label=DBA_TISSUE)
+```
+
+```{r}
+dba.plotMA(myc.counted)
+```
+
+```{r}
+help("dba.plotVolcano")
+dba.plotVolcano(myc.counted, bLabels = T)
+```
+```{r}
+#BiocManager::install("profileplyr")
+#library(profileplyr)
+profiles <- dba.plotProfile(myc.counted,merge=c(DBA_TISSUE, DBA_REPLICATE))
+dba.plotProfile(profiles)
+```
+
+# Repeat with control vs mutant RA 
+
+```{r}
+samples2 <- read.csv("./SampleSheet2.csv")
+myc2 <- dba(sampleSheet=samples2)
+myc2
+```
+```{r}
+myc.counted2 <- dba.count(myc2)
+myc.counted2
+```
+
+```{r}
+# normalize data - I use default normalization method based on sequencing depth
+myc.counted2 <- dba.normalize(myc.counted2)
+```
+
+```{r}
+#Next step is to tell DiffBind how to model the data and which comparisons we are interested in. I am interested in comparisons relative to control with no diet 
+help("dba.contrast")
+myc.counted2 <- dba.contrast(myc.counted2,
+                            reorderMeta=list(Condition="control"))
+myc.counted2
+```
+
+```{r}
+#Perform differential analysis
+help("dba.analyze")
+myc.counted2 <- dba.analyze(myc.counted2)
+dba.show(myc.counted2, bContrasts=TRUE)
+```
+
+```{r}
+#retrieve differentially bound sites, returned as GRanges object 
+myc.counted2.DB <- dba.report(myc.counted2)
+myc.counted2.DB
+```
+
+```{r}
+findOverlaps(myc.counted2.DB, ranges.Sox2.1)
+findOverlaps(myc.counted2.DB, ranges.Sox2.2)
+findOverlaps(myc.counted2.DB, ranges.Sox2.3) # overlap 4312
+findOverlaps(myc.counted2.DB, ranges.Sox2.4)
+```
+```{r}
+myc.counted2.DB[4312,]
+```
+
+```{r}
+findOverlaps(myc.counted2.DB, ranges.Sox2ot.1) # overlap in control vs mutant RA, 4930
+findOverlaps(myc.counted2.DB, ranges.Sox2ot.2)
+findOverlaps(myc.counted2.DB, ranges.Sox2ot.3)
+```
+```{r}
+myc.counted2.DB[4930,]
+```
+
+
+
+
+<!-- # Now we will use ChIP Peak Anno to annotate our differential peaks and look at each gene. -->
+
+<!-- ```{r} -->
+<!-- #BiocManager::install("ChIPpeakAnno") -->
+<!-- library(ChIPpeakAnno) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- annoData<- readRDS('/Users/christinacomo/Library/CloudStorage/OneDrive-TheUniversityofColoradoDenver/10xVisium/Cut and Run/RDSfiles/annoData.GRCm38.RDS') -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- myc.counted$score <- as.numeric(myc.counted$score) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- myGrange.anno <- annotatePeakInBatch(myc.counted.DB,  -->
+<!--                                      AnnotationData=annoData,  -->
+<!--                                      output="nearestBiDirectionalPromoters", -->
+<!--                                      bindingRegion=c(-100000, 100000)) -->
+
+<!-- head(myGrange.anno) -->
+<!-- length(myc.counted.DB)  -->
+<!-- length(myGrange.anno)  ## Note this is longer than myGrange due to multiple annotations up and down stream -->
+
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- myGrange.anno <- addGeneIDs(annotatedPeak=myGrange.anno,  -->
+<!--                         orgAnn="org.Mm.eg.db",  -->
+<!--                         IDs2Add="symbol") -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- head(myGrange.anno) -->
+<!-- ``` -->
+
+<!-- # Write to file -->
+
+<!-- ## Convert Granges object to data frame -->
+<!-- ```{r} -->
+<!-- BiocManager::install("Repitools") -->
+<!-- library(Repitools) -->
+<!-- ## Problem is that there are duplicate peak names which is what annoGR2DF uses for rownames which cannot be duplicates. -->
+<!-- ## So first will make these names all unique with make.names() function -->
+<!-- myGrange.anno@ranges@NAMES <- make.names(myGrange.anno@ranges@NAMES, unique=TRUE) -->
+<!-- mydf <- annoGR2DF(myGrange.anno) -->
+<!-- head(mydf) -->
+<!-- ``` -->
+<!-- ## Write data frame to file -->
+
+<!-- ```{r} -->
+<!-- #write.table(myGrange.anno, file = "./peaks", sep = "\t", quote = F, col.names = NA) -->
+<!-- write.csv(mydf, "./peaks.csv") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- #BiocManager::install("plyranges") -->
+<!-- library(plyranges) -->
+<!-- library(GenomicRanges) -->
+<!-- library(Signac) -->
+<!-- #first peak : chr3:34,558,245-34,559,793 -->
+<!-- ranges.Sox2ot <- StringToGRanges('3-34558245-34559793') -->
+<!-- ``` -->
+
+#Bigwig track visualization
+
+```{r}
+Control <- read_bigwig('./bigWig/replicate/control_REP4.mLb.clN.bigWig')
+seqlevelsStyle(Control) <- "UCSC"
+write_bigwig(Control, file = './bigWig/replicate/control_REP4.mLb.clN2.bigWig')
+```
+
+```{r}
+ControlRA <- read_bigwig('./bigWig/replicate/controlRA_REP1.mLb.clN.bigWig')
+seqlevelsStyle(ControlRA) <- "UCSC"
+write_bigwig(ControlRA, file = './bigWig/replicate/controlRA_REP1.mLb.clN2.bigWig')
+```
+
+```{r}
+Mutant <- read_bigwig('./bigWig/replicate/mutant_REP1.mLb.clN.bigWig')
+seqlevelsStyle(Mutant) <- "UCSC"
+write_bigwig(Mutant, file = './bigWig/replicate/mutant_REP1.mLb.clN2.bigWig')
+```
+
+```{r}
+MutantRA <- read_bigwig('./bigWig/replicate/mutantRA_REP2.mLb.clN.bigWig')
+seqlevelsStyle(MutantRA) <- "UCSC"
+write_bigwig(MutantRA, file = './bigWig/replicate/mutantRA_REP2.mLb.clN2.bigWig')
+```
+
+```{r}
+track <- list('Control' = './bigWig/replicate/control_REP4.mLb.clN2.bigWig', 'Control+RA' =  './bigWig/replicate/controlRA_REP1.mLb.clN2.bigWig', 'Foxc1 Mutant' = './bigWig/replicate/mutant_REP1.mLb.clN2.bigWig', 'Foxc1 Mutant+RA' = './bigWig/replicate/mutantRA_REP2.mLb.clN2.bigWig')
+```
+
+
+```{r}
+help("BigwigTrack")
+BigwigTrack(
+  region = ranges.Sox2ot,
+  bigwig = track,
+  extend.upstream = 100,
+  extend.downstream = 300,
+  type = "coverage",
+  y_label = "bigWig",
+  bigwig.scale = "common",
+  smooth = 200
+)
+```
+
+
+```{r}
+#chr3:34,647,760-34,652,141
+ranges.Sox2 <-StringToGRanges('chr3-34647760-34652141')
+help("BigwigTrack")
+BigwigTrack(
+  region = ranges.Sox2,
+  bigwig = track,
+  extend.upstream = 100,
+  extend.downstream = 300,
+  type = "coverage",
+  y_label = "bigWig",
+  bigwig.scale = "common",
+  smooth = 200
+)
+```
+
+
+# Plots for ATAC and CUT and RUN
+```{r}
+library(plyranges)
+ctrl1 <- read_bigwig('/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycCtrl_R1.bigWig')
+seqlevelsStyle(ctrl1) <- "UCSC"
+write_bigwig(ctrl1, file = '/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycCtrl_R1.bigWig')
+
+Mut3 <- read_bigwig('/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycMut_R3.bigWig')
+seqlevelsStyle(Mut3) <- "UCSC"
+write_bigwig(Mut3, file = '/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycMut_R3.bigWig')
+```
+
+```{r}
+ranges.Sox2ot <- StringToGRanges('chr3-34560263-34562983')
+bigwig.list <- list('Control ATAC' = './bigWig/replicate/control_REP4.mLb.clN2.bigWig','MycTag Control' = '/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycCtrl_R1.bigWig', 'MycTag Foxc1 Mutant' = '/Users/christinacomo/OneDrive - The University of Colorado Denver/10xVisium/Cut and Run/bigwig/MycMut_R3.bigWig')
+```
+
+```{r}
+BigwigTrack(
+  region = ranges.Sox2ot,
+  bigwig = bigwig.list,
+  extend.upstream = 100,
+  extend.downstream = 300,
+  type = "coverage",
+  y_label = "bigWig",
+  bigwig.scale = "common",
+  smooth = 200
+)
+```
